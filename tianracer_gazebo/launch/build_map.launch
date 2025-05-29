@@ -1,0 +1,56 @@
+<?xml version="1.0"?>
+<launch>
+     
+    <!-- Config map file -->
+    <!-- 赛道地图名称 (对应tianracer_gazebo/maps目录下的yaml文件) -->
+    <arg name="world" default="test_indoor" />
+    <!-- 机器人名称 (支持通过环境变量TIANRACER_NAME设置) -->
+    <arg name="robot_name" default="$(optenv TIANRACER_NAME tianracer)" doc="robot name [tianracer_No1, tianracer_No2, tianracer_No3, ...]"/>
+     <!-- ROS命名空间 (用于话题隔离) -->
+    <arg name="namespace" default="tianracer"/>
+    <!-- ################ 仿真环境加载 ################ -->
+    <!-- 启动Gazebo赛道环境 + 机器人模型 -->
+    <include file="$(find tianracer_gazebo)/launch/tianracer_on_racetrack.launch">
+        <arg name="world" value="$(arg world)" />            <!-- 传递地图参数 -->
+        <arg name="robot_name" value="$(arg robot_name)" />  <!-- 机器人命名 -->
+    </include>
+    <!-- ############# 运动控制系统 ############## -->
+    <!-- 连接Gazebo仿真与ROS控制指令 -->
+    <include file="$(find tianracer_gazebo)/launch/tianracer_control.launch" >
+        <arg name="robot_name" value="$(arg robot_name)" /><!-- 保持命名一致 -->
+    </include>
+    <!-- ############# SLAM建图系统 ############## -->
+    <!-- 使用仿真时间 (Gazebo时间同步) -->
+    <param name="/use_sim_time" value="true" />
+    <!--多机命名空间隔离-->
+    <group ns="$(arg robot_name)">
+    <!-- 坐标系变换 (将全局/map关联到机器人命名空间) -->
+        <node pkg="tf" name="map_to_ns_map" type="static_transform_publisher" args="0 0 0 0 0 0 /map /$(arg robot_name)/map 1000" />
+    <!-- Cartographer建图核心节点 -->    
+        <node name="cartographer_node" pkg="cartographer_ros"
+                type="cartographer_node" 
+                args="
+                    -configuration_directory $(find tianracer_slam)/param   
+                    -configuration_basename 2d_scan.lua"
+                output="screen">                <!-- 参数文件路径 --><!-- 2D激光配置 -->
+            <remap from="/odom" to="/tianracer/odom"/>
+            <remap from="/imu" to="/tianracer/imu"/>
+        </node>
+    <!-- 生成可视化占据栅格地图 (分辨率0.025米/格) -->
+    <node name="cartographer_occupancy_grid_node" pkg="cartographer_ros"
+        type="cartographer_occupancy_grid_node" args="-resolution 0.025" />
+    </group>
+    <!-- ############### 可视化配置 ############### -->
+    <!-- RViz开关 (默认开启) -->
+    <arg name="use_rviz" default="true" />
+    <!-- 固定坐标系 (基于机器人命名空间) -->
+    <arg name="fixed_frame" value="$(arg robot_name)/map"/>
+    <!-- RViz可视化节点 -->
+    <node ns="$(arg robot_name)" pkg="rviz" type="rviz" name="rviz" args="-d $(find tianracer_rviz)/rviz_cfg/build_map.rviz -f $(arg fixed_frame)" if="$(arg use_rviz)"/>
+    <!-- 键盘控制节点 -->
+    <node name="keyboard_ctl" pkg="tianracer_gazebo" type="keyboard_teleop.py" output="screen">
+        <!-- 可调参数 -->
+        <param name="~speed" value="0.8" />               <!-- 最大前进速度 (m/s) -->
+        <param name="~max_steering_angle" value="0.45" />  <!-- 最大转向角 (rad) -->
+    </node>
+</launch>
